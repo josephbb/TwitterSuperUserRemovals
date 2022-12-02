@@ -11,24 +11,47 @@ import os
 import json
 import pickle
 
-def make_data_dictionary(user_df,
-                         outcome='total_tweets',
-                         indicator='SU_postbanned',
-                        window=30):
-    #Make a dictionary from a dataframe for a user
-    #Stan (our model fitting software) needs a dictionary
-    return dict(N=user_df.shape[0], iter=3,
-                            y=user_df[outcome].values.astype('int'),
-                            x=(np.arange(window*2)),
-                            banned=user_df[indicator].values.astype('int'))
+#Load model code
+with open('./src/model.stan', 'r') as file:
+    model_code = file.read() 
+    
 
-def get_fit(stan_data, model_code,
- num_chains=4,num_samples=1000):
-    model = stan.build(model_code,data=stan_data)
-    fit = model.sample(num_chains=num_chains, num_samples=num_samples)
-    return model, fit
+
+   
+
+    
+def process_one(one_user, window, outcome, indicator, folder='/', user_id='none'):
+    
+    if (np.sum(one_user[indicator]==True) > (window-1)) :
+        print('./output/posteriors'+ folder + str(user_id) + '.json')
+
+        stan_data = make_data_dictionary(one_user,
+                         outcome=outcome,
+                         indicator=indicator,
+                         window=window)
+        model, fit = get_fit(stan_data, model_code)
+        idata = make_idata(fit, model, stan_data)
+        idata.to_json('./output/posteriors'+ folder + str(user_id) + '.json')
+        return True
+    else: 
+        return False
+    
+
+def get_change(posterior,adj=True):
+    
+    idata = az.from_json(posterior)
+    
+    with_ban =  np.array(np.exp(idata.posterior_predictive.mu_hat))
+    without_ban =  np.array(np.exp(idata.posterior_predictive.mu_hat_without_ban))
+
+    return with_ban.reshape(4000,60),  without_ban.reshape(4000,60)
+
+
 
 def make_idata(fit, model, stan_data):
+    '''
+        This function takes a fit object and returns an ArviZ idata object
+    '''
     idata = az.from_pystan(
         posterior=fit,
         posterior_predictive=['y_hat','exp_hat',
